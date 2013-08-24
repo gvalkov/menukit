@@ -12,9 +12,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <getopt.h>
 
 #include "util.h"
+
+const char* version = "0.1";
+
 
 xcb_connection_t *conn = NULL;
 
@@ -26,15 +30,78 @@ static void die(const char *fmt, ...) {
     exit(1);
 }
 
-struct program_options {
-    char *title;
-    char *class;
-};
 
-const char *usage =
-    "usage: menus asdfasdfas dfasdfa sdfasdf"
-    "\n"
-    "asdfasdf";
+static char* parse_options(int argc, char **argv) {
+    static const char usage[] =
+        "Usage: menus [-hdv] [-c config.lua]\n"
+        "\n"
+        "Menus is a lightweight menu system for X11.\n"
+        "\n"
+        "Required arguments:\n"
+        "  -c, --config path        lua config file\n"
+        "\n"
+        "Optional arguments:\n"
+        "  -h, --help               show this help message and exit\n"
+        "  -d, --debug              show debug messages\n"
+        "  -v, --version            show program's version number and exit\n"
+        ;
+
+    int debug_flag = 0;
+    int help_flag = 0;
+    int version_flag = 0;
+    char *config_file = NULL;
+
+    if (argc == 1) {
+        fwrite(usage, 1, sizeof(usage), stdout);
+        exit(1);
+    }
+
+    while (1) {
+        int c, idx=0;
+
+        struct option long_options[] = {
+            {"debug",   no_argument, &debug_flag, 1},
+            {"help",    no_argument, &help_flag, 1},
+            {"version", no_argument, &version_flag, 1},
+            {"config",  required_argument, 0, 'c'},
+            {0,0,0,0},
+        };
+
+        c = getopt_long(argc, argv, "dhvc:", long_options, &idx);
+     
+        if (c == -1)
+            break;
+     
+        switch (c) {
+        case 0:
+            if (long_options[idx].flag != 0)
+                break;
+     
+        case 'h': help_flag = 1; break;
+        case 'v': version_flag =1; break;
+        case 'c': config_file = optarg; break;
+     
+        case '?':
+            break;
+     
+        default:
+            die("invalid");
+        }
+    }
+
+    if (help_flag) {
+        fwrite(usage, 1, sizeof(usage), stdout);
+        exit(1);
+    }
+
+    if (version_flag) {
+        printf("menus version %s\n", version);
+        exit(0);
+    }
+
+    return config_file;
+     
+}
 
 static void exit_handler(struct ev_loop *loop, ev_signal *w, int revents) {
     ev_break(loop, EVBREAK_ALL);
@@ -157,8 +224,9 @@ static struct ev_loop* setup_events(xcb_connection_t *conn) {
 }
 
 
-int main(void)
-{
+int main(int argc, char **argv) {
+    parse_options(argc, argv);
+    
     // configure lua 
     lua_State *L = lua_open();
     luaL_openlibs(L);
@@ -195,7 +263,6 @@ int main(void)
     cairo_surface_destroy(surface);
     cairo_destroy(ctx);
     xcb_flush(conn);
-
     
     struct ev_loop *loop = setup_events(conn);
     ev_run(loop, 0);
