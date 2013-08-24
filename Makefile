@@ -1,13 +1,21 @@
-CFLAGS += -W -Wall -g -O2
-CFLAGS += `pkg-config --cflags cairo xcb`
+CC := clang
+PKGS := xcb xcb-keysyms xcb-util xcb-ewmh cairo lua
 
-TARGETS=main
+CFLAGS  = $(shell pkg-config --cflags $(PKGS))
+LDFLAGS = $(shell pkg-config --libs $(PKGS)) -lev
+CFLAGS += -fno-strict-aliasing -std=c99 -g -O2
+CFLAGS += -I/usr/include/libev 
+
+TARGETS=menus
+OBJECTS=menus.o
 
 all: $(TARGETS)
 
-main: main.o
-	$(CC) -o $@ $+ `pkg-config --libs cairo xcb`
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+menus: $(OBJECTS)
+	$(CC) -o $@ $+ `pkg-config --libs cairo xcb xcb-util xcb-ewmh lua` -lev
 
 clean:
-	$(RM) $(TARGETS)
-	$(RM) *.o
+	rm -f $(TARGETS) $(OBJECTS)
