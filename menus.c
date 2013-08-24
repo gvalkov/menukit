@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdbool.h>
+#include <unistd.h>
 #include <getopt.h>
 
 #include "util.h"
@@ -78,6 +78,7 @@ static char* parse_options(int argc, char **argv) {
                 break;
      
         case 'h': help_flag = 1; break;
+        case 'd': debug_flag = 1; break;
         case 'v': version_flag =1; break;
         case 'c': config_file = optarg; break;
      
@@ -99,8 +100,13 @@ static char* parse_options(int argc, char **argv) {
         exit(0);
     }
 
+    if (config_file == NULL)
+        die("error: missing required argument '-c, --config'\n");
+
+    if (access(config_file, F_OK | R_OK) == -1)
+        die("error: config file '%s' does not exist or is not readable.\n", config_file);
+
     return config_file;
-     
 }
 
 static void exit_handler(struct ev_loop *loop, ev_signal *w, int revents) {
@@ -225,7 +231,8 @@ static struct ev_loop* setup_events(xcb_connection_t *conn) {
 
 
 int main(int argc, char **argv) {
-    parse_options(argc, argv);
+    char *config_file = parse_options(argc, argv);
+    puts(config_file);
     
     // configure lua 
     lua_State *L = lua_open();
