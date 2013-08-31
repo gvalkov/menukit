@@ -38,8 +38,3 @@ function menu.new(items)
    self.items = items
    return self
 end
-
-i = item('text')
-j = item('text2')
-
-print(j.__index == item)

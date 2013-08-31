@@ -8,9 +8,9 @@ CFLAGS += -I/usr/include/libev
 
 TARGETS = src/menu
 OBJECTS = src/menu.o
-LUADATA = src/lua_dsl.h src/lua_util.h
+LUADATA = src/lua_dsl.h src/lua_util.h src/lua_defaults.h
 
-all: $(TARGETS) $(LUADATA)
+all:  $(LUADATA) $(TARGETS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -18,7 +18,9 @@ all: $(TARGETS) $(LUADATA)
 lua_%.h: %.lua
 	lua bin2c.lua $< $(<:src/%.lua=lua_%) > $@
 
-menus: $(OBJECTS)
+$(OBJECTS): $(LUADATA)
+
+src/menu: $(OBJECTS)
 	$(CC) -o $@ $+ `pkg-config --libs cairo xcb xcb-util xcb-ewmh lua` -lev
 
 clean:

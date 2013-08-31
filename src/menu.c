@@ -1,3 +1,9 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <getopt.h>
+
 #include <ev.h>
 #include <cairo.h>
 #include <cairo-xcb.h>
@@ -9,13 +15,10 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <getopt.h>
+#include "lua_util.h"
+#include "lua_dsl.h"
+#include "lua_defaults.h"
 
-#include "util.h"
 
 const char* version = "0.1";
 
@@ -141,9 +144,13 @@ static char* parse_options(int argc, char **argv) {
     return config_file;
 }
 
-static void parse_config(const char* config_file, lua_State* L) {
-    if (luaL_loadfile(L, "stdlib.lua") || lua_pcall(L, 0, 0, 0))
-        die("error: cannot run configuration file '%s'", lua_tostring(L, -1));
+static void parse_config(const char* config_file, lua_State* L)
+{
+    if (luaL_loadbuffer(L, (const char*)lua_util, sizeof(lua_util), "src/util.lua") || lua_pcall(L, 0, 0, 0))
+        die("error: cannot load helper functions '%s'", lua_tostring(L, -1));
+
+    if (luaL_loadbuffer(L, (const char*)lua_dsl, sizeof(lua_dsl), "src/dsl.lua") || lua_pcall(L, 0, 0, 0))
+        die("error: cannot load helper functions '%s'", lua_tostring(L, -1));
 
     if (luaL_loadfile(L, config_file) || lua_pcall(L, 0, 0, 0))
         die("error: cannot run configuration file '%s'", lua_tostring(L, -1));
@@ -151,6 +158,26 @@ static void parse_config(const char* config_file, lua_State* L) {
     lua_getglobal(L, "menus");
     if (!lua_istable(L, -1)) 
         die("global variable 'menus' not defined or is not a table\n");
+}
+
+xcb_visualtype_t *default_visual(const xcb_screen_t *s) {
+    xcb_depth_iterator_t depth_iter = xcb_screen_allowed_depths_iterator(s);
+
+    if(depth_iter.data)
+        for(; depth_iter.rem; xcb_depth_next (&depth_iter))
+            for(xcb_visualtype_iterator_t visual_iter = xcb_depth_visuals_iterator(depth_iter.data);
+                visual_iter.rem; xcb_visualtype_next (&visual_iter))
+                if(s->root_visual == visual_iter.data->visual_id)
+                    return visual_iter.data;
+
+    return NULL;
+}
+
+
+xcb_screen_t* screen_get(xcb_connection_t* conn, int screen) {
+    xcb_screen_t *s;
+    s = xcb_aux_get_screen(conn, screen);
+    return s;
 }
 
 static xcb_window_t create_window(xcb_connection_t *conn, xcb_screen_t *screen, const uint32_t color) {
@@ -225,6 +252,7 @@ static struct ev_loop* setup_events(xcb_connection_t *conn) {
 
     return loop;
 }
+
 
 int main(int argc, char **argv) {
     char *config_file = parse_options(argc, argv);
