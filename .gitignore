@@ -1,2 +1,5 @@
 src/lua_dsl.h
 src/lua_util.h
+src/lua_defaults.h
+*.o
+src/menu
