@@ -6,8 +6,8 @@ LDFLAGS = $(shell pkg-config --libs $(PKGS)) -lev
 CFLAGS += -fno-strict-aliasing -std=c99 -g -O2
 CFLAGS += -I/usr/include/libev 
 
-TARGETS=menus
-OBJECTS=menus.o
+TARGETS=src/menu
+OBJECTS=src/menu.o
 
 all: $(TARGETS)
 

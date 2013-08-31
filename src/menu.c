@@ -19,8 +19,50 @@
 
 const char* version = "0.1";
 
-
 xcb_connection_t *conn = NULL;
+
+
+static void exit_handler(struct ev_loop *loop, ev_signal *w, int revents) {
+    ev_break(loop, EVBREAK_ALL);
+    printf("received something\n");
+    exit(1);
+}
+
+static void reload_handler(struct ev_loop *loop, ev_signal *w, int revents) {
+    ev_break(loop, EVBREAK_ALL);
+    printf("received something\n");
+    exit(1);
+}
+
+static void event_prehandler(struct ev_loop *loop, ev_check *w, int revents) {
+    xcb_generic_event_t *event;
+    xcb_generic_event_t *mouse = NULL;
+
+    while((event = xcb_poll_for_event(conn)))
+    {
+        if(XCB_EVENT_RESPONSE_TYPE(event) == XCB_MOTION_NOTIFY)
+            mouse = event;
+        // else
+        //     xcb_event_handle(&rootconf.event_h, event);
+    }
+    if(mouse)
+    {
+        puts("mouse");
+        // xcb_event_handle(&rootconf.event_h, mouse);
+    }
+}
+
+static void event_handler(struct ev_loop *loop, ev_io *w, int revents) {
+    printf("received an event\n");
+    exit(1);
+}
+
+static void debug(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
 
 static void die(const char *fmt, ...) {
     va_list ap;
@@ -29,7 +71,6 @@ static void die(const char *fmt, ...) {
     va_end(ap);
     exit(1);
 }
-
 
 static char* parse_options(int argc, char **argv) {
     static const char usage[] =
@@ -68,25 +109,16 @@ static char* parse_options(int argc, char **argv) {
         };
 
         c = getopt_long(argc, argv, "dhvc:", long_options, &idx);
-     
-        if (c == -1)
-            break;
+        if (c == -1) break;
      
         switch (c) {
-        case 0:
-            if (long_options[idx].flag != 0)
-                break;
-     
+        case 0: if (long_options[idx].flag != 0) break;
         case 'h': help_flag = 1; break;
         case 'd': debug_flag = 1; break;
         case 'v': version_flag =1; break;
         case 'c': config_file = optarg; break;
-     
-        case '?':
-            break;
-     
-        default:
-            die("invalid");
+        case '?': break;
+        default: die("invalid");
         }
     }
 
@@ -109,50 +141,19 @@ static char* parse_options(int argc, char **argv) {
     return config_file;
 }
 
-static void exit_handler(struct ev_loop *loop, ev_signal *w, int revents) {
-    ev_break(loop, EVBREAK_ALL);
-    printf("received something\n");
-    exit(1);
+static void parse_config(const char* config_file, lua_State* L) {
+    if (luaL_loadfile(L, "stdlib.lua") || lua_pcall(L, 0, 0, 0))
+        die("error: cannot run configuration file '%s'", lua_tostring(L, -1));
+
+    if (luaL_loadfile(L, config_file) || lua_pcall(L, 0, 0, 0))
+        die("error: cannot run configuration file '%s'", lua_tostring(L, -1));
+
+    lua_getglobal(L, "menus");
+    if (!lua_istable(L, -1)) 
+        die("global variable 'menus' not defined or is not a table\n");
 }
 
-static void reload_handler(struct ev_loop *loop, ev_signal *w, int revents) {
-    ev_break(loop, EVBREAK_ALL);
-    printf("received something\n");
-    exit(1);
-}
-
-static void event_prehandler(struct ev_loop *loop, ev_check *w, int revents) {
-    xcb_generic_event_t *event;
-    xcb_generic_event_t *mouse = NULL;
-
-    while((event = xcb_poll_for_event(conn)))
-    {
-        if(XCB_EVENT_RESPONSE_TYPE(event) == XCB_MOTION_NOTIFY)
-            mouse = event;
-        // else
-        //     xcb_event_handle(&rootconf.event_h, event);
-    }
-    if(mouse)
-    {
-        puts("mouse");
-        // xcb_event_handle(&rootconf.event_h, mouse);
-    }
-}
-
-static void event_handler(struct ev_loop *loop, ev_io *w, int revents) {
-    
-    printf("received an event\n");
-    exit(1);
-}
-
-// another callback, this time for a time-out
-// static void timeout_cb (struct ev_loop *loop, ev_timer *w, int revents) {
-//     puts("timeout");
-//     ev_break(loop, EVBREAK_ONE);
-// }
-
-static xcb_window_t create_window(xcb_connection_t *conn,
-                                  xcb_screen_t *screen, const uint32_t color) {
+static xcb_window_t create_window(xcb_connection_t *conn, xcb_screen_t *screen, const uint32_t color) {
     uint32_t mask = 0;
     uint32_t values[3];
 
@@ -195,10 +196,6 @@ static void setup_window(xcb_connection_t *conn, xcb_window_t win, xcb_ewmh_conn
     uint32_t values[1];
     values[0] = XCB_STACK_MODE_ABOVE;
     xcb_configure_window(conn, win, XCB_CONFIG_WINDOW_STACK_MODE, values);
-
-}
-
-static void draw(xcb_connection_t *conn) {
 }
 
 static struct ev_loop* setup_events(xcb_connection_t *conn) {
@@ -229,14 +226,16 @@ static struct ev_loop* setup_events(xcb_connection_t *conn) {
     return loop;
 }
 
-
 int main(int argc, char **argv) {
     char *config_file = parse_options(argc, argv);
-    puts(config_file);
+    debug("using config file: %s\n", config_file);
     
-    // configure lua 
+    // initialize lua 
     lua_State *L = lua_open();
     luaL_openlibs(L);
+
+    parse_config(config_file, L);
+    
     lua_close(L);
 
     // configure events
