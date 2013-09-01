@@ -11,6 +11,7 @@
 #include <xcb/xcb_aux.h>
 #include <xcb/xcb_event.h>
 #include <xcb/xcb_ewmh.h>
+
 #include <lua.h>
 #include <lauxlib.h>
 #include <lualib.h>
@@ -20,11 +21,40 @@
 #include "lua_defaults.h"
 
 
+// Globals
 const char* version = "0.1";
-
 xcb_connection_t *conn = NULL;
 
+typedef struct menu {
+    xcb_window_t win;
+    menu *parent;
+    const char* name;
+} menu;
 
+typedef struct menuitem {
+    menu *parent;
+
+} menuitem;
+
+
+// Utility functions
+static void debug(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
+
+static void die(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    exit(1);
+}
+
+
+// Event handlers
 static void exit_handler(struct ev_loop *loop, ev_signal *w, int revents) {
     ev_break(loop, EVBREAK_ALL);
     printf("received something\n");
@@ -39,40 +69,114 @@ static void reload_handler(struct ev_loop *loop, ev_signal *w, int revents) {
 
 static void event_prehandler(struct ev_loop *loop, ev_check *w, int revents) {
     xcb_generic_event_t *event;
-    xcb_generic_event_t *mouse = NULL;
+    xcb_motion_notify_event_t *mouse = NULL;
 
-    while((event = xcb_poll_for_event(conn)))
-    {
-        if(XCB_EVENT_RESPONSE_TYPE(event) == XCB_MOTION_NOTIFY)
-            mouse = event;
-        // else
-        //     xcb_event_handle(&rootconf.event_h, event);
-    }
-    if(mouse)
-    {
-        puts("mouse");
-        // xcb_event_handle(&rootconf.event_h, mouse);
+    while ((event = xcb_poll_for_event(conn))) {
+        if (XCB_EVENT_RESPONSE_TYPE(event) == XCB_MOTION_NOTIFY) {
+            mouse = (xcb_motion_notify_event_t*)event;
+            debug("%d %d\n", mouse->event_x, mouse->event_y);
+        }
     }
 }
 
 static void event_handler(struct ev_loop *loop, ev_io *w, int revents) {
-    printf("received an event\n");
-    exit(1);
 }
 
-static void debug(const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
+
+// Drawing and window handling
+xcb_visualtype_t *default_visual(const xcb_screen_t *s) {
+    xcb_depth_iterator_t depth_iter = xcb_screen_allowed_depths_iterator(s);
+
+    if(depth_iter.data)
+        for(; depth_iter.rem; xcb_depth_next (&depth_iter))
+            for(xcb_visualtype_iterator_t visual_iter = xcb_depth_visuals_iterator(depth_iter.data);
+                visual_iter.rem; xcb_visualtype_next (&visual_iter))
+                if(s->root_visual == visual_iter.data->visual_id)
+                    return visual_iter.data;
+
+    return NULL;
 }
 
-static void die(const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
-    exit(1);
+xcb_screen_t* screen_get(xcb_connection_t* conn, int screen) {
+    xcb_screen_t *s;
+    s = xcb_aux_get_screen(conn, screen);
+    return s;
+}
+
+static xcb_window_t create_window(xcb_connection_t *conn, xcb_screen_t *screen, const uint32_t color) {
+    uint32_t mask = 0;
+    uint32_t values[3];
+
+    xcb_window_t win = xcb_generate_id(conn);
+
+    mask |= XCB_CW_BACK_PIXEL;
+    values[0] = color;
+
+    mask |= XCB_CW_OVERRIDE_REDIRECT;
+    values[1] = 1;
+
+    mask |= XCB_CW_EVENT_MASK;
+    values[2] = XCB_EVENT_MASK_EXPOSURE |
+        XCB_EVENT_MASK_KEY_PRESS |
+        XCB_EVENT_MASK_KEY_RELEASE |
+        XCB_EVENT_MASK_BUTTON_PRESS |
+        XCB_EVENT_MASK_BUTTON_RELEASE |
+        XCB_EVENT_MASK_POINTER_MOTION |
+        XCB_EVENT_MASK_VISIBILITY_CHANGE |
+        XCB_EVENT_MASK_STRUCTURE_NOTIFY;
+
+    xcb_create_window(
+        conn, XCB_COPY_FROM_PARENT, win, screen->root,
+        600, 600,
+        // screen->width_in_pixels, screen->height_in_pixels,
+        300, 300,
+        0,
+        XCB_WINDOW_CLASS_INPUT_OUTPUT,
+        screen->root_visual,
+        mask, values);
+
+    xcb_map_window(conn, win);
+    // set_window_ontop(conn, win);
+
+    return win;
+}
+
+static void setup_window(xcb_connection_t *conn, xcb_window_t win, xcb_ewmh_connection_t *ewmh, char *title) {
+    xcb_change_property(conn, XCB_PROP_MODE_REPLACE, win, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, strlen(title), title);
+    xcb_change_property(conn, XCB_PROP_MODE_REPLACE, win, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, strlen(title), title);
+    xcb_change_property(conn, XCB_PROP_MODE_REPLACE, win, ewmh->_NET_WM_WINDOW_TYPE, XCB_ATOM_ATOM, 32, 1, &(ewmh->_NET_WM_WINDOW_TYPE_POPUP_MENU));
+
+    uint32_t values[1];
+    values[0] = XCB_STACK_MODE_ABOVE;
+    xcb_configure_window(conn, win, XCB_CONFIG_WINDOW_STACK_MODE, values);
+}
+
+static struct ev_loop* setup_events(xcb_connection_t *conn) {
+    struct ev_loop *loop = EV_DEFAULT;
+
+    struct ev_signal sigint, sighup, sigterm;
+    ev_signal_init(&sigint,  exit_handler, SIGINT);
+    ev_signal_init(&sigterm, exit_handler, SIGTERM);
+    ev_signal_init(&sighup,  reload_handler, SIGHUP);
+
+    ev_signal_start(loop, &sigint);
+    ev_signal_start(loop, &sighup);
+    ev_signal_start(loop, &sigterm);
+
+    // ev_unref(loop);
+    // ev_unref(loop);
+    // ev_unref(loop);
+
+    ev_io xcb_io;
+    ev_check xcb_check;
+
+    int xcb_fd = xcb_get_file_descriptor(conn);
+    ev_io_init(&xcb_io, event_handler, xcb_fd, EV_READ);
+    ev_io_start(loop, &xcb_io);
+    ev_check_init(&xcb_check, &event_prehandler);
+    ev_check_start(loop, &xcb_check);
+
+    return loop;
 }
 
 static char* parse_options(int argc, char **argv) {
@@ -144,8 +248,7 @@ static char* parse_options(int argc, char **argv) {
     return config_file;
 }
 
-static void parse_config(const char* config_file, lua_State* L)
-{
+static void parse_config(const char* config_file, lua_State* L) {
     if (luaL_loadbuffer(L, (const char*)lua_util, sizeof(lua_util), "src/util.lua") || lua_pcall(L, 0, 0, 0))
         die("error: cannot load helper functions '%s'", lua_tostring(L, -1));
 
@@ -158,99 +261,6 @@ static void parse_config(const char* config_file, lua_State* L)
     lua_getglobal(L, "menus");
     if (!lua_istable(L, -1)) 
         die("global variable 'menus' not defined or is not a table\n");
-}
-
-xcb_visualtype_t *default_visual(const xcb_screen_t *s) {
-    xcb_depth_iterator_t depth_iter = xcb_screen_allowed_depths_iterator(s);
-
-    if(depth_iter.data)
-        for(; depth_iter.rem; xcb_depth_next (&depth_iter))
-            for(xcb_visualtype_iterator_t visual_iter = xcb_depth_visuals_iterator(depth_iter.data);
-                visual_iter.rem; xcb_visualtype_next (&visual_iter))
-                if(s->root_visual == visual_iter.data->visual_id)
-                    return visual_iter.data;
-
-    return NULL;
-}
-
-
-xcb_screen_t* screen_get(xcb_connection_t* conn, int screen) {
-    xcb_screen_t *s;
-    s = xcb_aux_get_screen(conn, screen);
-    return s;
-}
-
-static xcb_window_t create_window(xcb_connection_t *conn, xcb_screen_t *screen, const uint32_t color) {
-    uint32_t mask = 0;
-    uint32_t values[3];
-
-    xcb_window_t win = xcb_generate_id(conn);
-
-    mask |= XCB_CW_BACK_PIXEL;
-    values[0] = color;
-
-    mask |= XCB_CW_OVERRIDE_REDIRECT;
-    values[1] = 1;
-
-    mask |= XCB_CW_EVENT_MASK;
-    values[2] = XCB_EVENT_MASK_EXPOSURE |
-        XCB_EVENT_MASK_KEY_PRESS |
-        XCB_EVENT_MASK_KEY_RELEASE |
-        XCB_EVENT_MASK_VISIBILITY_CHANGE |
-        XCB_EVENT_MASK_STRUCTURE_NOTIFY;
-
-    xcb_create_window(
-        conn, XCB_COPY_FROM_PARENT, win, screen->root,
-        600, 600,
-        // screen->width_in_pixels, screen->height_in_pixels,
-        300, 300,
-        0,
-        XCB_WINDOW_CLASS_INPUT_OUTPUT,
-        screen->root_visual,
-        mask, values);
-
-    xcb_map_window(conn, win);
-    // set_window_ontop(conn, win);
-
-    return win;
-}
-
-static void setup_window(xcb_connection_t *conn, xcb_window_t win, xcb_ewmh_connection_t *ewmh, char *title) {
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE, win, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, strlen(title), title);
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE, win, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, strlen(title), title);
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE, win, ewmh->_NET_WM_WINDOW_TYPE, XCB_ATOM_ATOM, 32, 1, &(ewmh->_NET_WM_WINDOW_TYPE_POPUP_MENU));
-
-    uint32_t values[1];
-    values[0] = XCB_STACK_MODE_ABOVE;
-    xcb_configure_window(conn, win, XCB_CONFIG_WINDOW_STACK_MODE, values);
-}
-
-static struct ev_loop* setup_events(xcb_connection_t *conn) {
-    struct ev_loop *loop = EV_DEFAULT;
-
-    struct ev_signal sigint, sighup, sigterm;
-    ev_signal_init(&sigint,  exit_handler, SIGINT);
-    ev_signal_init(&sigterm, exit_handler, SIGTERM);
-    ev_signal_init(&sighup,  reload_handler, SIGHUP);
-
-    ev_signal_start(loop, &sigint);
-    ev_signal_start(loop, &sighup);
-    ev_signal_start(loop, &sigterm);
-
-    // ev_unref(loop);
-    // ev_unref(loop);
-    // ev_unref(loop);
-
-    ev_io xcb_io;
-    ev_check xcb_check;
-
-    int xcb_fd = xcb_get_file_descriptor(conn);
-    ev_io_init(&xcb_io, event_handler, xcb_fd, EV_READ);
-    ev_io_start(loop, &xcb_io);
-    ev_check_init(&xcb_check, &event_prehandler);
-    ev_check_start(loop, &xcb_check);
-
-    return loop;
 }
 
 
