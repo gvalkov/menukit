@@ -19,15 +19,12 @@
 #include "lua_util.h"
 #include "lua_dsl.h"
 #include "lua_defaults.h"
+#include "lua_post.h"
 
-
-// Globals
-const char* version = "0.1";
-xcb_connection_t *conn = NULL;
 
 typedef struct menu {
     xcb_window_t win;
-    menu *parent;
+    struct menu *parent;
     const char* name;
 } menu;
 
@@ -35,6 +32,13 @@ typedef struct menuitem {
     menu *parent;
 
 } menuitem;
+
+
+// Globals
+const char* version = "0.1";
+xcb_connection_t *conn = NULL;
+menu *menus = NULL;
+
 
 
 // Utility functions
@@ -51,6 +55,15 @@ static void die(const char *fmt, ...) {
     vfprintf(stderr, fmt, ap);
     va_end(ap);
     exit(1);
+}
+
+static int die_lua(lua_State *L) {
+    const char *msg = luaL_checkstring(L, 1);
+    int exitcode = luaL_checknumber(L, 2);
+    fwrite(msg, sizeof(char), strlen(msg), stderr);
+    fwrite("\n", 1, 1, stderr);
+    exit(exitcode);
+    return 0;
 }
 
 
@@ -248,7 +261,11 @@ static char* parse_options(int argc, char **argv) {
     return config_file;
 }
 
-static void parse_config(const char* config_file, lua_State* L) {
+static void load_config(const char* config_file, lua_State* L) {
+    lua_pushcfunction(L, die_lua);
+    lua_setglobal(L, "die");
+
+    
     if (luaL_loadbuffer(L, (const char*)lua_util, sizeof(lua_util), "src/util.lua") || lua_pcall(L, 0, 0, 0))
         die("error: cannot load helper functions '%s'", lua_tostring(L, -1));
 
@@ -258,21 +275,34 @@ static void parse_config(const char* config_file, lua_State* L) {
     if (luaL_loadfile(L, config_file) || lua_pcall(L, 0, 0, 0))
         die("error: cannot run configuration file '%s'", lua_tostring(L, -1));
 
+    if (luaL_loadbuffer(L, (const char*)lua_post, sizeof(lua_post), "src/post.lua") || lua_pcall(L, 0, 0, 0))
+        die("error: cannot load helper functions '%s'", lua_tostring(L, -1));
+
     lua_getglobal(L, "menus");
     if (!lua_istable(L, -1)) 
         die("global variable 'menus' not defined or is not a table\n");
+
+    lua_pushnil(L);
+    debug("%d\n", lua_objlen(L, -2));
+    while (lua_next(L, -2) != 0) {
+        printf("%s - %s\n",
+               lua_typename(L, lua_type(L, -2)),
+               lua_typename(L, lua_type(L, -1)));
+        /* removes 'value'; keeps 'key' for next iteration */
+        lua_pop(L, 1);
+    }
 }
 
 
 int main(int argc, char **argv) {
     char *config_file = parse_options(argc, argv);
-    debug("using config file: %s\n", config_file);
+    debug("debug: using config file '%s'\n", config_file);
     
     // initialize lua 
     lua_State *L = lua_open();
     luaL_openlibs(L);
 
-    parse_config(config_file, L);
+    load_config(config_file, L);
     
     lua_close(L);
 

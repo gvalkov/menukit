@@ -8,7 +8,7 @@ CFLAGS += -I/usr/include/libev
 
 TARGETS = src/menu
 OBJECTS = src/menu.o
-LUADATA = src/lua_dsl.h src/lua_util.h src/lua_defaults.h
+LUADATA = src/lua_dsl.h src/lua_util.h src/lua_defaults.h src/lua_post.h
 
 all:  $(LUADATA) $(TARGETS)
 
